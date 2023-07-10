@@ -11,9 +11,22 @@
     "esModuleInterop": true,
     "lib": ["ESNext", "DOM"],
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@assets/*": ["src/assets/*"],
+      "@components/*": ["src/components/*"],
+      "@plugin/*": ["src/plugin/*"],
+      "@store/*": ["src/store/*"],
+      "@views/*": ["src/views/*"]
+    }
   },
-  "include": ["src"],
+  "include": ["src", "renderer.d.ts"],
   "references": [
     { "path": "./tsconfig.node.json" }
   ]

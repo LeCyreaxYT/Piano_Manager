@@ -1,10 +1,26 @@
-import { createApp } from 'vue'
-import "./style.css"
-import App from './App.vue'
-import './samples/node-api'
+import { createApp, VueElement } from 'vue';
 
-createApp(App)
-  .mount('#app')
-  .$nextTick(() => {
-    postMessage({ payload: 'removeLoading' }, '*')
-  })
+// Components
+import AppBase from '@/App.vue';
+
+// Plugins
+import router from '@plugin/router'
+
+// Styles
+import '@assets/tailwind.css';
+
+class Base {
+    static _app: ReturnType<typeof createApp>
+
+    static init() {
+        Base._app = createApp(AppBase)
+        Base._app.use(router)
+        Base._app.mount("#app").$nextTick(() => {
+            postMessage({ payload: 'removeLoading' }, '*')
+        })
+    }
+}
+
+Base.init()
+
+export default Base

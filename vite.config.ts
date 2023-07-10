@@ -1,4 +1,5 @@
 import { rmSync } from 'node:fs'
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import electron from 'vite-plugin-electron'
@@ -14,6 +15,16 @@ export default defineConfig(({ command }) => {
   const sourcemap = isServe || !!process.env.VSCODE_DEBUG
 
   return {
+    resolve: {
+      alias: {
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
+        '@assets': fileURLToPath(new URL('./src/assets', import.meta.url)),
+        '@components': fileURLToPath(new URL('./src/components', import.meta.url)),
+        '@plugin': fileURLToPath(new URL('./src/plugin', import.meta.url)),
+        '@store': fileURLToPath(new URL('./src/store', import.meta.url)),
+        '@views': fileURLToPath(new URL('./src/views', import.meta.url))
+      }
+    },
     plugins: [
       vue(),
       electron([
