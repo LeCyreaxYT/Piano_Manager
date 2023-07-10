@@ -1,5 +1,5 @@
 {
-  "name": "electron-vue-vite",
+  "name": "piano_manager",
   "version": "2.0.0",
   "main": "dist-electron/main/index.js",
   "license": "MIT",
