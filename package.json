@@ -1,6 +1,6 @@
 {
   "name": "piano_manager",
-  "version": "2.0.0",
+  "version": "1.0.1",
   "author": {
     "name": "DerEchteAlec",
     "email": "alecschitzkat@icloud.com",
@@ -34,7 +34,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build && electron-builder",
+    "build": "vue-tsc --noEmit && vite build && electron-builder --x64",
     "preview": "vite preview"
   },
   "devDependencies": {
@@ -56,6 +56,7 @@
     "vue-tsc": "^1.8.4"
   },
   "dependencies": {
-    "keysender": "^2.3.0"
+    "keysender": "^2.3.0",
+    "promise-worker": "^2.0.1"
   }
 }

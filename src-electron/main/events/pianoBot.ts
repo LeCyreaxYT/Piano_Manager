@@ -2,8 +2,9 @@ import { BrowserWindow, contextBridge, dialog, globalShortcut, ipcMain } from "e
 import { Hardware, KeyboardButton } from "keysender";
 import { CharToKeyCode, isCharAlwaysHigh, isNumberChar } from "../virtualdictionary";
 const keysender = new Hardware();
-
 import fs from "node:fs";
+
+import { workerData, parentPort } from "worker_threads";
 
 interface MultiNote {
     isHighNote: boolean;
@@ -32,7 +33,7 @@ class PianoBot {
     private mainWindow: BrowserWindow;
 
     // Main Data
-    private version: string = "0.0.1";
+    private version: string = "1.0.1";
     private state = "stopped";
     private playtime: string = "00:00:00";
     private notesCount: number = 0;
@@ -287,13 +288,11 @@ class PianoBot {
         });
     }
 
-    public async startPianoBot() {
+    private timerInterval: NodeJS.Timeout;
+    public startTimer() {
         if (this.state === "running") return;
-        this.state = "running";
-        this.playtime = "00:00:00";
-
         const startTime = Date.now();
-        const interval = setInterval(() => {
+        this.timerInterval = setInterval(() => {
             // Playtime update every second - Format: HH:MM:SS
             const time = Date.now() - startTime;
             const date = new Date(time);
@@ -302,14 +301,26 @@ class PianoBot {
             const seconds = date.getUTCSeconds().toString().padStart(2, "0");
             this.playtime = `${hours}:${minutes}:${seconds}`;
         }, 1000);
+    }
+        
 
+    public async startPianoBot() {
+        if (this.state === "running") return;
+
+        if (this.state === "paused") {
+            this.state = "running";
+            return;
+        }
+        
+        this.state = "running";
+        this.playtime = "00:00:00";
         for (const note of this.notes) {
             while (this.state === "paused") {
                 await new Promise((resolve) => setTimeout(resolve, 100));
             }
 
             if (this.state === "stopped") {
-                clearInterval(interval);
+                clearInterval(this.timerInterval);
                 return;
             };
 
@@ -358,7 +369,7 @@ class PianoBot {
             }
         }
 
-        clearInterval(interval);
+        clearInterval(this.timerInterval);
         this.state = "stopped";
 
         if (this.isLoop) {
@@ -368,7 +379,6 @@ class PianoBot {
 
     public pausePianoBot() {
         if (this.state !== "running") return;
-
         this.state = "paused";
     }
 

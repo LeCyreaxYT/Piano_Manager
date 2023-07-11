@@ -1,11 +1,10 @@
 import { app, BrowserWindow, shell, ipcMain, Menu } from 'electron'
-import { release } from 'node:os'
+import { release, setPriority } from 'node:os'
 import { join } from 'node:path'
 import pianoBot from './events/pianoBot';
 
 // Custom Titlebar
 import { setupTitlebar, attachTitlebarToWindow } from "custom-electron-titlebar/main";
-import { Terser } from 'vite';
 setupTitlebar();
 
 // Set environment variables
@@ -26,6 +25,7 @@ if (!app.requestSingleInstanceLock()) {
   process.exit(0)
 }
 
+
 // Here, you can also use other preload
 const preload = join(__dirname, '../preload/index.js')
 const url = process.env.VITE_DEV_SERVER_URL
@@ -39,8 +39,7 @@ export class WindowManager {
     mainWindow = WindowManager.createWindow();
 
     // Menu Template
-    const menu = Menu.buildFromTemplate([])
-    Menu.setApplicationMenu(menu)
+    Menu.setApplicationMenu(null)
 
     if (process.env.VITE_DEV_SERVER_URL) { // electron-vite-vue#298
       mainWindow.loadURL(url)
@@ -59,6 +58,12 @@ export class WindowManager {
       if (url.startsWith('https:')) shell.openExternal(url)
       return { action: 'deny' }
     })
+
+    mainWindow.webContents.once('dom-ready', () => {
+      setPriority(process.pid, -20);
+      setPriority(mainWindow.webContents.getOSProcessId(), -20);
+    });
+
   
     // Attach the titlebar to the window
     WindowManager.attachTitleBar();
