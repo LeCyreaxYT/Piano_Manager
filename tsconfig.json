@@ -13,9 +13,11 @@
     "skipLibCheck": true,
     "noEmit": true,
 
+
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
 
+    "outDir": "dist-build",
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],

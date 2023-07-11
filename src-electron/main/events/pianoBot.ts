@@ -1,7 +1,9 @@
-import { BrowserWindow, contextBridge, globalShortcut, ipcMain } from "electron";
+import { BrowserWindow, contextBridge, dialog, globalShortcut, ipcMain } from "electron";
 import { Hardware, KeyboardButton } from "keysender";
-import { CharToKeyCode, isCharAlwaysHigh } from "../virtualdictionary";
+import { CharToKeyCode, isCharAlwaysHigh, isNumberChar } from "../virtualdictionary";
 const keysender = new Hardware();
+
+import fs from "node:fs";
 
 interface MultiNote {
     isHighNote: boolean;
@@ -36,6 +38,7 @@ class PianoBot {
     private notesCount: number = 0;
     private notesRaw: ""
     private notes: PianoNotes[] = [];
+    private isLoop: boolean = false;
 
     private errorMessages: string = "";
 
@@ -76,6 +79,7 @@ class PianoBot {
             if (data.notesCount) this.notesCount = data.notesCount;
             if (data.notesRaw) { this.notesRaw = data.notesRaw; this.formatNotes(); }
             if (data.notes) this.notes = data.notes;
+            if (data.isLoop) this.isLoop = data.isLoop;
 
             if (data.errorMessages) this.errorMessages = data.errorMessages;
 
@@ -100,7 +104,7 @@ class PianoBot {
     }
 
     public formatNotes() {
-        let nodes = this.notesRaw.replace(/ /g, "");
+        let nodes = this.notesRaw.replace(/ /g, "").replace(/\n/g, "").replace(/\r/g, "").replace(/\\n/g, "").replace(/\\r/g, "");
         let notesArray = nodes.split("");
         this.notesCount = notesArray.length;
         this.registerNotes(notesArray)
@@ -176,8 +180,9 @@ class PianoBot {
                         mulitNote: [],
                     };
                     continue;
-                case "|" || "\n" || "\r":
+                case "|":
                     notes.push({
+                        pause: true,
                         isMultiNote: false,
                         singleNote: {
                             isHighNote: false,
@@ -186,8 +191,7 @@ class PianoBot {
                         },
                     })
                     continue;
-
-                case " ":
+                case " " || "\t" || "\v" || "\f" || "\u00A0" || "\uFEFF" || "\u2028" || "\u2029":
                     continue;
                 default:
                     if (isMultiNote) {    
@@ -197,6 +201,11 @@ class PianoBot {
                         const isAlwaysHigh = isCharAlwaysHigh(note);
                         if (isAlwaysHigh) {
                             isHighNote = true;   
+                        }
+
+                        const isNumber = isNumberChar(note);
+                        if (isNumber) {
+                            isHighNote = false;
                         }
 
                         if (isHighNote) {
@@ -216,6 +225,11 @@ class PianoBot {
                         const isAlwaysHigh = isCharAlwaysHigh(note);
                         if (isAlwaysHigh) {
                             isHighNote = true;
+                        }
+
+                        const isNumber = isNumberChar(note);
+                        if (isNumber) {
+                            isHighNote = false;
                         }
 
                         if (isHighNote) {
@@ -253,7 +267,6 @@ class PianoBot {
         } else {
             this.errorMessages = "";
         }
-
         this.notes = notes;
     }
 
@@ -281,14 +294,14 @@ class PianoBot {
 
         const startTime = Date.now();
         const interval = setInterval(() => {
+            // Playtime update every second - Format: HH:MM:SS
             const time = Date.now() - startTime;
-            const seconds = Math.floor(time / 1000);
-            const minutes = Math.floor(seconds / 60);
-            const hours = Math.floor(minutes / 60);
-
-            this.playtime = `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+            const date = new Date(time);
+            const hours = date.getUTCHours().toString().padStart(2, "0");
+            const minutes = date.getUTCMinutes().toString().padStart(2, "0");
+            const seconds = date.getUTCSeconds().toString().padStart(2, "0");
+            this.playtime = `${hours}:${minutes}:${seconds}`;
         }, 1000);
-        
 
         for (const note of this.notes) {
             while (this.state === "paused") {
@@ -302,7 +315,7 @@ class PianoBot {
 
             try {
                 if (note.pause) {
-                    await new Promise((resolve) => setTimeout(resolve, 60000 / (this.bpm * 2)));
+                    await new Promise((resolve) => setTimeout(resolve, 30000 / (this.bpm)));
                     continue;
                 }
                 
@@ -314,9 +327,17 @@ class PianoBot {
                         }
 
                         keysender.keyboard.toggleKey(multiNote.note, true);
-                        await new Promise((resolve) => setTimeout(resolve, 10));
+
+                        if (multiNote.isHighNote) {
+                            await new Promise((resolve) => setTimeout(resolve, 1));
+                            keysender.keyboard.toggleKey("shift", false);
+                        }
+                    }
+
+                    await new Promise((resolve) => setTimeout(resolve, 10));
+
+                    for (const multiNote of note.mulitNote) {
                         keysender.keyboard.toggleKey(multiNote.note, false);
-                        keysender.keyboard.toggleKey("shift", false);
                     }
                 } else {
                     if (note.singleNote.isHighNote) {
@@ -331,58 +352,82 @@ class PianoBot {
                 }
 
                 // Delay BPM
-                await new Promise((resolve) => setTimeout(resolve, 60000 / (this.bpm * 2)));
+                await new Promise((resolve) => setTimeout(resolve, 30000 / (this.bpm) - 12));
             } catch (error) {
                 console.log(error);
             }
         }
+
+        clearInterval(interval);
+        this.state = "stopped";
+
+        if (this.isLoop) {
+            this.startPianoBot();
+        }
     }
 
     public pausePianoBot() {
+        if (this.state !== "running") return;
+
         this.state = "paused";
     }
 
     public stopPianoBot() {
+        if (this.state === "stopped") return;
         this.state = "stopped";
     }
 
     public loadPianoBot() {
+        dialog.showOpenDialog(this.mainWindow, {
+            title: "Load PianoBot",
+            defaultPath: "PianoBot.json",
+            filters: [
+                { name: "JSON", extensions: ["json"] },
+            ],
+        }).then((result) => {
+            if (result.canceled) return;
+            if (result.filePaths === undefined) return;
 
+            fs.readFile(result.filePaths[0], "utf-8", (err, data) => {
+                if (err) {
+                    console.log(err);
+                    return;
+                }
+
+                const pianoBotData = JSON.parse(data);
+
+                this.bpm = pianoBotData.bpm;
+                this.notesRaw = pianoBotData.notes;
+
+                this.formatNotes();
+                this.requestSync();
+            });
+        });
     }
 
     public savePianoBot() {
+        const data = {
+            version: this.version,
+            bpm: this.bpm, 
+            notes: this.notesRaw,
+        };
 
+        const dataString = JSON.stringify(data, null, 4);
+
+        dialog.showSaveDialog(this.mainWindow, {
+            title: "Save PianoBot - " + this.version,
+            defaultPath: "PianoBot.json",
+            filters: [
+                { name: "JSON", extensions: ["json"] },
+            ],
+        }).then((result) => {
+            if (result.canceled) return;
+            if (result.filePath === undefined) return;
+
+            fs.writeFileSync(result.filePath, dataString);
+        }
+        );   
     }
-
-    // public testStart() {
-    //     const sequence: PianoKeys[] = [
-    //         { key: "a", delay: 100 },
-    //         { key: "s", delay: 100 },
-    //         { key: "d", delay: 100 },
-    //         { key: "f", delay: 100 },
-    //         { key: "g", delay: 100 },
-    //         { key: "h", delay: 100 },
-    //         { key: "j", delay: 100 },
-    //         { key: "k", delay: 100 },
-    //     ];
-
-    //     this.sendSequence(sequence, 1000);
-    // }
-
-    // public async sendKey(entry: PianoKeys) {
-    //     robot.keyTap(entry.key);
-
-    //     // Delay
-    //     await new Promise(resolve => setTimeout(resolve, entry.delay));
-    // }
-
-    // public async sendSequence(sequence: PianoKeys[], delay: number) {
-    //     for (const entry of sequence)
-    //     {
-    //         await this.sendKey(entry);
-    //         await new Promise(resolve => setTimeout(resolve, delay));
-    //     }
-    // }
 }
 
 export default PianoBot.getInstance();

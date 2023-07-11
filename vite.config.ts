@@ -25,12 +25,15 @@ export default defineConfig(({ command }) => {
         '@views': fileURLToPath(new URL('./src/views', import.meta.url))
       }
     },
+    build: {
+      outDir: "dist-build",
+    },
     plugins: [
       vue(),
       electron([
         {
           // Main-Process entry file of the Electron App.
-          entry: 'electron/main/index.ts',
+          entry: 'src-electron/main/index.ts',
           onstart(options) {
             if (process.env.VSCODE_DEBUG) {
               console.log(/* For `.vscode/.debug.script.mjs` */'[startup] Electron App')
@@ -50,7 +53,7 @@ export default defineConfig(({ command }) => {
           },
         },
         {
-          entry: 'electron/preload/index.ts',
+          entry: 'src-electron/preload/index.ts',
           onstart(options) {
             // Notify the Renderer-Process to reload the page when the Preload-Scripts build is complete, 
             // instead of restarting the entire Electron App.

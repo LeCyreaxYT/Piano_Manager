@@ -11,15 +11,15 @@
         <div class="basis-1/6">
           <label for="noten" class="block mb-2 text-sm font-medium text-white">Buttons</label>
 
-          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-2 mb-3 rounded w-full" @click="clearNotes">Zurücksetzen</button>
-          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-2 mb-3 rounded w-full h-14" @click="startPianoBot">Start</button>
-          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-2 mb-3 rounded w-full h-14" @click="pausePianoBot">Pause</button>
-          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-2 mb-3 rounded w-full h-14" @click="stopPianoBot">Stop</button>
-          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-2 mb-3 rounded w-full h-14" @click="loadPianoBot">Noten Laden</button>
-          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-2 mb-3 rounded w-full h-14" @click="savePianoBot">Noten Speichern</button>
+          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-1 mb-3 rounded w-full" @click="clearNotes">Zurücksetzen</button>
+          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-1 mb-3 rounded w-full h-14" @click="startPianoBot">Start (F2)</button>
+          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-1 mb-3 rounded w-full h-14" @click="pausePianoBot">Pause (F3)</button>
+          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-1 mb-3 rounded w-full h-14" @click="stopPianoBot">Stop (F4)</button>
+          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-1 mb-3 rounded w-full h-14" @click="loadPianoBot">Noten Laden</button>
+          <button class="bg-gray-500 hover:bg-gray-400 text-white font-bold text-sm py-2 px-1 mb-3 rounded w-full h-14" @click="savePianoBot">Noten Speichern</button>
 
           <div>
-            <input type="checkbox" class="form-checkbox h-5 w-5 text-gray-600" id="checkbox1"> 
+            <input v-model="isLoop" type="checkbox" class="form-checkbox h-5 w-5 text-gray-600" id="checkbox1"> 
             <label class="text-white pl-2 text-sm" for="checkbox1">Loop</label>
           </div>
         </div>
@@ -36,7 +36,7 @@
 
         <p class="text-white text-sm">Spielzeit: <span class="text-green-500">{{ playtime }}</span></p>
         <p class="text-white text-sm">Noten: <span class="text-green-500">{{ notesCount }}</span></p>
-        <p class="text-white text-sm">Version: <span class="text-green-500">{{ version}}</span></p>
+        <p class="text-white text-sm">Version: <span class="text-green-500">{{ version }}</span></p>
       </div>
     </div>
 </template>
@@ -53,6 +53,7 @@ export default defineComponent({
       playtime: "00:00:00",
       notesCount: 0,
       version: "1.0.0",
+      isLoop: false,
 
       notesRaw: "",
       nodes: [],
@@ -76,6 +77,14 @@ export default defineComponent({
         }, 1000)
       })
   
+    },
+
+    isLoop: function (val) {
+      this.$nextTick(function () {
+        window.api.syncData({
+          isLoop: val
+        })
+      })
     }
   },
 

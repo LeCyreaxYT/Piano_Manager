@@ -13,5 +13,5 @@ contextBridge.exposeInMainWorld('api', {
     syncDataResponse: (callback: (data: any) => void) => ipcRenderer.on('syncDataResponse', (event, data) => callback(data)),
 
     requestSync: () => ipcRenderer.send('requestSync'),
-    requestSyncResponse: (callback: (data: any) => void) => ipcRenderer.once('requestSyncResponse', (event, data) => callback(data))
+    requestSyncResponse: (callback: (data: any) => void) => ipcRenderer.on('requestSyncResponse', (event, data) => callback(data))
 })

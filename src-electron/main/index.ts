@@ -1,15 +1,16 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, Menu } from 'electron'
 import { release } from 'node:os'
 import { join } from 'node:path'
 import pianoBot from './events/pianoBot';
 
 // Custom Titlebar
 import { setupTitlebar, attachTitlebarToWindow } from "custom-electron-titlebar/main";
+import { Terser } from 'vite';
 setupTitlebar();
 
 // Set environment variables
 process.env.DIST_ELECTRON = join(__dirname, '..')
-process.env.DIST = join(process.env.DIST_ELECTRON, '../dist')
+process.env.DIST = join(process.env.DIST_ELECTRON, '../dist-build')
 process.env.PUBLIC = process.env.VITE_DEV_SERVER_URL
   ? join(process.env.DIST_ELECTRON, '../public')
   : process.env.DIST
@@ -36,6 +37,10 @@ let mainWindow: BrowserWindow | null = null
 export class WindowManager {
   public static init() {
     mainWindow = WindowManager.createWindow();
+
+    // Menu Template
+    const menu = Menu.buildFromTemplate([])
+    Menu.setApplicationMenu(menu)
 
     if (process.env.VITE_DEV_SERVER_URL) { // electron-vite-vue#298
       mainWindow.loadURL(url)
@@ -67,10 +72,13 @@ export class WindowManager {
       title: 'Piano Manager | By DerEchteAlec',
       icon: join(process.env.PUBLIC, 'logo.png'),
 
+      frame: false,
       titleBarStyle: 'hidden',
       height: 600,
       width: 800,
       resizable: false,
+
+      autoHideMenuBar: true,
 
       webPreferences: {
         preload,

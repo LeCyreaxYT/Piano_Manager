@@ -4,9 +4,11 @@
         <Navigation />
 
         <div className="main-content flex flex-col flex-grow p-4">
-          <KeepAlive >
-            <RouterView />
-          </KeepAlive>
+          <RouterView v-slot="{ Component }">
+            <KeepAlive>
+              <component :is="Component" />
+            </KeepAlive>
+          </RouterView>
         </div>
       </main>
   </div>
@@ -23,26 +25,14 @@ export default defineComponent({
 
   data() {
     return {
-
     }
   },
   components: {
     Navigation 
   },
 
-  methods: {
-    
-  },
-
-  computed: {
-
-  },
-
-  async mounted() {
-   
-  },
-
-  unmounted() {
+  created() {
+    this.$router.push('/')
   },
 })
 </script>

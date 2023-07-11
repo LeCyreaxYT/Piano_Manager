@@ -6,11 +6,11 @@
                 <ul class="flex rounded-lg flex-row mt-0 border-gray-700">
                     <template v-for="(item, index) in list">
                         <li class="p-1.5 bg-slate-600" @click="openSite(item.name)" v-if="getCurrentRoute === item.name">
-                            <a href="#" class="block pl-3 pr-3 rounded text-white transition-all hover:text-white/75 text-sm">{{ item.name }}</a>
+                            <a href="#" class="block pl-3 pr-3 rounded text-white transition-all hover:text-white/75 text-sm">{{ item.text }}</a>
                         </li>
 
                         <li class="p-1.5" @click="openSite(item.name)" v-else>
-                            <a href="#" class="block pl-3 pr-3 rounded text-white transition-all hover:text-white/75 text-sm">{{ item.name }}</a>
+                            <a href="#" class="block pl-3 pr-3 rounded text-white transition-all hover:text-white/75 text-sm">{{ item.text }}</a>
                         </li>
                     </template>
                 </ul>
@@ -27,8 +27,9 @@ export default defineComponent({
     data() {
         return {
             list: [
-                { name: 'Home', path: '/' },
-                { name: 'Settings', path: '/settings' }
+                { text: 'Home', name: "Home", path: '/' },
+                { text: 'Settings', name: "Settings", path: '/settings' },
+                { text: "Über uns", name: "About", path: '/about'}
             ]
         }
     },
