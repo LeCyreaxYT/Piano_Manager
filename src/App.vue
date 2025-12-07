@@ -1,42 +1,27 @@
 <template>
-  <div className="absolute top-0 left-0 h-full w-full flex flex-row bg-neutral-700">
-      <main className="main flex flex-col flex-grow ml-0 transition-all duration-150 ease-in">
-        <Navigation />
+  <div class="h-screen w-screen flex flex-col bg-base-200 overflow-hidden" data-theme="pianomanager">
+    <!-- Custom Titlebar -->
+    <Titlebar />
 
-        <div className="main-content flex flex-col flex-grow p-4">
-          <RouterView v-slot="{ Component }">
-            <KeepAlive>
-              <component :is="Component" />
-            </KeepAlive>
-          </RouterView>
-        </div>
-      </main>
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+      <RouterView v-slot="{ Component }">
+        <KeepAlive>
+          <component :is="Component" />
+        </KeepAlive>
+      </RouterView>
+    </main>
   </div>
 </template>
 
-<script lang="ts">
-import { defineComponent } from 'vue'
+<script setup lang="ts">
+import { onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import Titlebar from '@components/layout/Titlebar.vue'
 
-// Layouts
-import Navigation from './views/layout/navigation.vue'
+const router = useRouter()
 
-export default defineComponent({
-  name: 'App',
-
-  data() {
-    return {
-    }
-  },
-  components: {
-    Navigation 
-  },
-
-  created() {
-    this.$router.push('/')
-  },
+onMounted(() => {
+  router.push('/')
 })
 </script>
-
-<style lang="scss">
-
-</style>

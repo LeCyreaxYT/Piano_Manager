@@ -1,3 +1,210 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  /* Custom Colors */
+  --color-primary: #8B5CF6;
+  --color-primary-hover: #7C3AED;
+  --color-primary-content: #FFFFFF;
+
+  --color-secondary: #6366F1;
+  --color-secondary-hover: #4F46E5;
+  --color-secondary-content: #FFFFFF;
+
+  --color-accent: #22D3EE;
+  --color-accent-hover: #06B6D4;
+  --color-accent-content: #000000;
+
+  --color-success: #22C55E;
+  --color-success-hover: #16A34A;
+  --color-warning: #EAB308;
+  --color-warning-hover: #CA8A04;
+  --color-error: #EF4444;
+  --color-error-hover: #DC2626;
+  --color-info: #3B82F6;
+
+  /* Surface Colors */
+  --color-surface-900: #0A0A0A;
+  --color-surface-800: #0F0F0F;
+  --color-surface-700: #171717;
+  --color-surface-600: #1A1A1A;
+  --color-surface-500: #262626;
+  --color-surface-400: #333333;
+  --color-surface-300: #404040;
+
+  /* Text Colors */
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #A1A1A1;
+  --color-text-muted: #6B7280;
+
+  /* Border */
+  --color-border: #333333;
+  --color-border-focus: #8B5CF6;
+
+  /* Fonts */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Border Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+/* Global Styles */
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-surface-800);
+  color: var(--color-text-primary);
+  overflow: hidden;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-surface-700);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-400);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-surface-300);
+}
+
+/* Selection */
+::selection {
+  background-color: var(--color-primary);
+  color: var(--color-primary-content);
+}
+
+/* Custom Utility Classes */
+.glass-panel {
+  background: rgba(23, 23, 23, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+}
+
+.glow-primary {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+}
+
+.glow-success {
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+}
+
+.glow-error {
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+}
+
+.glow-warning {
+  box-shadow: 0 0 20px rgba(234, 179, 8, 0.3);
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.4);
+  }
+  50% {
+    opacity: 0.8;
+    box-shadow: 0 0 30px rgba(34, 197, 94, 0.6);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+/* Transition Utilities */
+.transition-smooth {
+  transition: all 0.2s ease-in-out;
+}
+
+/* CodeMirror Theme Overrides */
+.cm-editor {
+  background-color: var(--color-surface-700) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 14px;
+  border-radius: var(--radius-md);
+}
+
+.cm-editor .cm-content {
+  padding: 12px;
+}
+
+.cm-editor .cm-gutters {
+  background-color: var(--color-surface-800) !important;
+  border-right: 1px solid var(--color-border) !important;
+  color: var(--color-text-muted) !important;
+}
+
+.cm-editor .cm-activeLineGutter {
+  background-color: var(--color-surface-600) !important;
+}
+
+.cm-editor .cm-activeLine {
+  background-color: rgba(139, 92, 246, 0.1) !important;
+}
+
+.cm-editor.cm-focused {
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--color-primary) !important;
+}
+
+/* Note Syntax Highlighting */
+.note-bracket {
+  color: #F472B6;
+  font-weight: bold;
+}
+
+.note-chord {
+  color: #22D3EE;
+  background-color: rgba(34, 211, 238, 0.1);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.note-pause {
+  color: var(--color-text-muted);
+}
+
+.note-high {
+  color: #FBBF24;
+}
+
+.note-low {
+  color: #A78BFA;
+}

@@ -1,106 +1,127 @@
 import { app, BrowserWindow, shell, ipcMain, Menu } from 'electron'
 import { release, setPriority } from 'node:os'
 import { join } from 'node:path'
-import pianoBot from './events/pianoBot';
+import pianoBot from './events/pianoBot'
 
-// Custom Titlebar
-import { setupTitlebar, attachTitlebarToWindow } from "custom-electron-titlebar/main";
-setupTitlebar();
+// Here, you can also use other preload
+const preload = join(__dirname, '../preload/index.js')
+let url: string | undefined
+let indexHtml: string
 
-// Set environment variables
-process.env.DIST_ELECTRON = join(__dirname, '..')
-process.env.DIST = join(process.env.DIST_ELECTRON, '../dist-build')
-process.env.PUBLIC = process.env.VITE_DEV_SERVER_URL
-  ? join(process.env.DIST_ELECTRON, '../public')
-  : process.env.DIST
+// Main window
+let mainWindow: BrowserWindow | null = null
 
-// Disable GPU Acceleration for Windows 7
-if (release().startsWith('6.1')) app.disableHardwareAcceleration()
+function setupEnvironment() {
+  // Set environment variables
+  process.env.DIST_ELECTRON = join(__dirname, '..')
+  process.env.DIST = join(process.env.DIST_ELECTRON, '../dist-build')
+  process.env.PUBLIC = process.env.VITE_DEV_SERVER_URL
+    ? join(process.env.DIST_ELECTRON, '../public')
+    : process.env.DIST
 
-// Set application name for Windows 10+ notifications
-if (process.platform === 'win32') app.setAppUserModelId(app.getName())
+  url = process.env.VITE_DEV_SERVER_URL
+  indexHtml = join(process.env.DIST, 'index.html')
 
+  // Disable GPU Acceleration for Windows 7
+  if (release().startsWith('6.1')) app.disableHardwareAcceleration()
+
+  // Set application name for Windows 10+ notifications
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('de.lecyreaxyt.piano_manager')
+  }
+}
+
+function createWindow() {
+  const win = new BrowserWindow({
+    title: 'Piano Manager | By DerEchteAlec',
+    icon: join(process.env.PUBLIC!, 'logo.png'),
+
+    frame: false,
+    titleBarStyle: 'hidden',
+    height: 680,
+    width: 1000,
+    minHeight: 680,
+    minWidth: 800,
+    resizable: true,
+
+    autoHideMenuBar: true,
+
+    webPreferences: {
+      preload,
+      nodeIntegration: true,
+      contextIsolation: true,
+    },
+  })
+
+  return win
+}
+
+function initApp() {
+  mainWindow = createWindow()
+
+  // Menu Template
+  Menu.setApplicationMenu(null)
+
+  if (url) {
+    mainWindow.loadURL(url)
+   // mainWindow.webContents.openDevTools()
+  } else {
+    mainWindow.loadFile(indexHtml)
+  }
+
+  // Test actively push message to the Electron-Renderer
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow?.webContents.send('main-process-message', new Date().toLocaleString())
+  })
+
+  // Make all links open with the browser, not with the application
+  mainWindow.webContents.setWindowOpenHandler(({ url: linkUrl }) => {
+    if (linkUrl.startsWith('https:')) shell.openExternal(linkUrl)
+    return { action: 'deny' }
+  })
+
+  mainWindow.webContents.once('dom-ready', () => {
+    try {
+      setPriority(process.pid, -20)
+      if (mainWindow) {
+        setPriority(mainWindow.webContents.getOSProcessId(), -20)
+      }
+    } catch (e) {
+      // Ignore priority setting errors
+    }
+  })
+
+  // ----------------- [Piano Bot] ----------------- //
+  pianoBot.init(mainWindow)
+
+  // ----------------- [Window Controls IPC] ----------------- //
+  ipcMain.on('window-minimize', () => {
+    mainWindow?.minimize()
+  })
+
+  ipcMain.on('window-maximize', () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow?.maximize()
+    }
+  })
+
+  ipcMain.on('window-close', () => {
+    mainWindow?.close()
+  })
+}
+
+// Single instance lock
 if (!app.requestSingleInstanceLock()) {
   app.quit()
   process.exit(0)
 }
 
-
-// Here, you can also use other preload
-const preload = join(__dirname, '../preload/index.js')
-const url = process.env.VITE_DEV_SERVER_URL
-const indexHtml = join(process.env.DIST, 'index.html')
-
-// Main window
-let mainWindow: BrowserWindow | null = null
-
-export class WindowManager {
-  public static init() {
-    mainWindow = WindowManager.createWindow();
-
-    // Menu Template
-    Menu.setApplicationMenu(null)
-
-    if (process.env.VITE_DEV_SERVER_URL) { // electron-vite-vue#298
-      mainWindow.loadURL(url)
-      mainWindow.webContents.openDevTools()
-    } else {
-      mainWindow.loadFile(indexHtml)
-    }
-  
-    // Test actively push message to the Electron-Renderer
-    mainWindow.webContents.on('did-finish-load', () => {
-      mainWindow?.webContents.send('main-process-message', new Date().toLocaleString())
-    })
-  
-    // Make all links open with the browser, not with the application
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith('https:')) shell.openExternal(url)
-      return { action: 'deny' }
-    })
-
-    mainWindow.webContents.once('dom-ready', () => {
-      setPriority(process.pid, -20);
-      setPriority(mainWindow.webContents.getOSProcessId(), -20);
-    });
-
-  
-    // Attach the titlebar to the window
-    WindowManager.attachTitleBar();
-
-    // ----------------- [Piano Bot] ----------------- //
-    pianoBot.init(mainWindow);
-  }
-
-  public static createWindow() {
-    const win = new BrowserWindow({
-      title: 'Piano Manager | By DerEchteAlec',
-      icon: join(process.env.PUBLIC, 'logo.png'),
-
-      frame: false,
-      titleBarStyle: 'hidden',
-      height: 600,
-      width: 800,
-      resizable: false,
-
-      autoHideMenuBar: true,
-
-      webPreferences: {
-        preload,
-        nodeIntegration: true,
-        contextIsolation: true,
-      },
-    })
-
-    return win;
-  }
-
-  public static attachTitleBar() {
-    attachTitlebarToWindow(mainWindow);
-  }
-}
-
-app.whenReady().then(WindowManager.init)
+app.whenReady().then(() => {
+  setupEnvironment()
+  initApp()
+})
 
 app.on('window-all-closed', () => {
   mainWindow = null
@@ -109,7 +130,6 @@ app.on('window-all-closed', () => {
 
 app.on('second-instance', () => {
   if (mainWindow) {
-    // Focus on the main window if the user tried to open another
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
   }
@@ -120,7 +140,7 @@ app.on('activate', () => {
   if (allWindows.length) {
     allWindows[0].focus()
   } else {
-    WindowManager.init()
+    initApp()
   }
 })
 
@@ -134,7 +154,7 @@ ipcMain.handle('open-win', (_, arg) => {
     },
   })
 
-  if (process.env.VITE_DEV_SERVER_URL) {
+  if (url) {
     childWindow.loadURL(`${url}#${arg}`)
   } else {
     childWindow.loadFile(indexHtml, { hash: arg })

@@ -1,7 +1,10 @@
 import { rmSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
+import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
+
+// @ts-ignore
 import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
 import pkg from './package.json'
@@ -14,6 +17,12 @@ export default defineConfig(({ command }) => {
   const isBuild = command === 'build'
   const sourcemap = isServe || !!process.env.VSCODE_DEBUG
 
+  // Get external dependencies and add electron
+  const external = [
+    'electron',
+    ...Object.keys('dependencies' in pkg ? pkg.dependencies : {})
+  ]
+
   return {
     resolve: {
       alias: {
@@ -21,7 +30,7 @@ export default defineConfig(({ command }) => {
         '@assets': fileURLToPath(new URL('./src/assets', import.meta.url)),
         '@components': fileURLToPath(new URL('./src/components', import.meta.url)),
         '@plugin': fileURLToPath(new URL('./src/plugin', import.meta.url)),
-        '@store': fileURLToPath(new URL('./src/store', import.meta.url)),
+        '@store': fileURLToPath(new URL('./src/stores', import.meta.url)),
         '@views': fileURLToPath(new URL('./src/views', import.meta.url))
       }
     },
@@ -30,6 +39,7 @@ export default defineConfig(({ command }) => {
     },
     plugins: [
       vue(),
+      tailwindcss(),
       electron([
         {
           // Main-Process entry file of the Electron App.
@@ -47,7 +57,7 @@ export default defineConfig(({ command }) => {
               minify: isBuild,
               outDir: 'dist-electron/main',
               rollupOptions: {
-                external: Object.keys('dependencies' in pkg ? pkg.dependencies : {}),
+                external,
               },
             },
           },
@@ -55,7 +65,7 @@ export default defineConfig(({ command }) => {
         {
           entry: 'src-electron/preload/index.ts',
           onstart(options) {
-            // Notify the Renderer-Process to reload the page when the Preload-Scripts build is complete, 
+            // Notify the Renderer-Process to reload the page when the Preload-Scripts build is complete,
             // instead of restarting the entire Electron App.
             options.reload()
           },
@@ -65,7 +75,7 @@ export default defineConfig(({ command }) => {
               minify: isBuild,
               outDir: 'dist-electron/preload',
               rollupOptions: {
-                external: Object.keys('dependencies' in pkg ? pkg.dependencies : {}),
+                external,
               },
             },
           },

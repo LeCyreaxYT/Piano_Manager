@@ -1,30 +1,25 @@
-import { BrowserWindow, contextBridge, dialog, globalShortcut, ipcMain } from "electron";
-import { Hardware, KeyboardButton } from "keysender";
+import { BrowserWindow, dialog, globalShortcut, ipcMain } from "electron";
+import { keyboard, Key } from "@nut-tree-fork/nut-js";
 import { CharToKeyCode, isCharAlwaysHigh, isNumberChar } from "../virtualdictionary";
-const keysender = new Hardware();
+
+// Disable autoDelayMs for faster key presses
+keyboard.config.autoDelayMs = 0;
 import fs from "node:fs";
 
-import { workerData, parentPort } from "worker_threads";
-
-interface MultiNote {
+interface NoteInfo {
     isHighNote: boolean;
-    note: KeyboardButton | null;
-    delay: number;
+    note: Key | null;
+    noteChar: string;
 }
 
-interface SingleNote {
-    isHighNote: boolean;
-    note: KeyboardButton | null;
-    delay: number;
-}
-
-interface PianoNotes {
-    isMultiNote?: boolean;
-    mulitNote?: MultiNote[];
-    singleNote?: SingleNote;
-
-    pause?: boolean;
-}
+// Event types based on VirtualPiano semantics
+type PianoEvent =
+    | { type: "simultaneous"; notes: NoteInfo[] }           // [asdf] - all at once
+    | { type: "fastSequence"; notes: NoteInfo[] }           // [a s d f] - fastest possible speed
+    | { type: "single"; note: NoteInfo }                    // Single note (no space before)
+    | { type: "shortPause" }                                // Space between notes (a s d)
+    | { type: "pause"; multiplier: number }                 // | character(s)
+    | { type: "extendedPause" }                             // Paragraph break (newline)
 
 class PianoBot {
     private static instance: PianoBot;
@@ -34,21 +29,22 @@ class PianoBot {
 
     // Main Data
     private version: string = "1.0.1";
-    private state = "stopped";
+    private state: "stopped" | "paused" | "running" = "stopped";
     private playtime: string = "00:00:00";
-    private notesCount: number = 0;
-    private notesRaw: ""
-    private notes: PianoNotes[] = [];
+    private estimatedDuration: string = "00:00:00";
+    private noteCount: number = 0;
+    private currentNoteIndex: number = 0;
+    private notes: string = "";
+    private parsedEvents: PianoEvent[] = [];
     private isLoop: boolean = false;
 
-    private errorMessages: string = "";
-
+    private error: string = "";
 
     // Settings Data
     private startHotkey: string = "F2";
     private stopHotkey: string = "F4";
     private pauseHotkey: string = "F3";
-    private bpm: number = 100;
+    private bpm: number = 135;
 
     public static getInstance(): PianoBot {
         if (!PianoBot.instance) {
@@ -72,371 +68,607 @@ class PianoBot {
         globalShortcut.register("F3", () => this.pausePianoBot());
         globalShortcut.register("F4", () => this.stopPianoBot());
 
-        // Sync Data
-        ipcMain.on("syncData", (event, data) => {
-            if (data.version) this.version = data.version;
-            if (data.state) this.state = data.state;
-            if (data.playtime) this.playtime = data.playtime;
-            if (data.notesCount) this.notesCount = data.notesCount;
-            if (data.notesRaw) { this.notesRaw = data.notesRaw; this.formatNotes(); }
-            if (data.notes) this.notes = data.notes;
-            if (data.isLoop) this.isLoop = data.isLoop;
-
-            if (data.errorMessages) this.errorMessages = data.errorMessages;
-
-            if (data.startHotkey) this.startHotkey = data.startHotkey;
-            if (data.stopHotkey) this.stopHotkey = data.stopHotkey;
-            if (data.pauseHotkey) this.pauseHotkey = data.pauseHotkey;
-            if (data.bpm) this.bpm = data.bpm;
+        // Sync Data from renderer
+        ipcMain.on("syncData", (_event, data) => {
+            if (data.notes !== undefined) {
+                this.notes = data.notes;
+                this.parseNotes();
+            }
+            if (data.isLoop !== undefined) this.isLoop = data.isLoop;
+            if (data.bpm !== undefined) {
+                this.bpm = data.bpm;
+                // Recalculate duration when BPM changes
+                this.calculateEstimatedDuration();
+            }
+            // Send updated data back to renderer
+            this.sendSync();
         });
-
-        setInterval(() => {
-            mainWindow.webContents.send("syncDataResponse", {
-                version: this.version,
-                state: this.state,
-                playtime: this.playtime,
-                notesCount: this.notesCount,
-                notes: this.notes,
-                errorMessages: this.errorMessages,
-            });
-        }, 200);
 
         this.mainWindow = mainWindow;
     }
 
-    public formatNotes() {
-        let nodes = this.notesRaw.replace(/ /g, "").replace(/\n/g, "").replace(/\r/g, "").replace(/\\n/g, "").replace(/\\r/g, "");
-        let notesArray = nodes.split("");
-        this.notesCount = notesArray.length;
-        this.registerNotes(notesArray)
+    private charToNoteInfo(char: string): NoteInfo {
+        let isHighNote = char === char.toUpperCase();
+        let noteChar = char;
+
+        const isAlwaysHigh = isCharAlwaysHigh(char);
+        if (isAlwaysHigh) {
+            isHighNote = true;
+        }
+
+        const isNumber = isNumberChar(char);
+        if (isNumber) {
+            isHighNote = false;
+        }
+
+        if (isHighNote) {
+            noteChar = char.toLowerCase();
+        }
+
+        return {
+            isHighNote,
+            note: CharToKeyCode(noteChar),
+            noteChar,
+        };
     }
 
-    public registerNotes(notesArray: string[]) {
-        let notes: PianoNotes[] = [];
-        let isMultiNote = false;
+    private isNoteChar(char: string): boolean {
+        return /[a-zA-Z0-9!@#$%^&*()]/.test(char);
+    }
 
+    public parseNotes() {
+        const events: PianoEvent[] = [];
         let isError = false;
         let errorMessage = "";
 
-        let bufferNormalNote: PianoNotes = { 
-            isMultiNote: false,
-            singleNote: {
-                isHighNote: false,
-                note: null,
-                delay: 0,
-            },
-        };
+        // Split by paragraphs (double newlines = extended pause)
+        const paragraphs = this.notes.split(/\n\s*\n/);
 
-        let bufferMultiNote: PianoNotes = {
-            isMultiNote: true,
-            mulitNote: [],
-        };
+        for (let p = 0; p < paragraphs.length; p++) {
+            const paragraph = paragraphs[p];
 
-        for (const note of notesArray) {
-            switch (note) {
-                case "[":
-                    if (isMultiNote) {
-                        isError = true;
-                        errorMessage = "Die Multi Note wurde bereits gestartet";
-                        continue;
-                    }
-
-                    isMultiNote = true;
-                    continue;
-                case "]":
-                    if (!isMultiNote) {
-                        isError = true;
-                        errorMessage = "Die Multi Note wurde nicht gestartet";
-                        return;
-                    }
-
-                    isMultiNote = false;
-                    notes.push(bufferMultiNote);
-
-                    bufferMultiNote = {
-                        isMultiNote: true,
-                        mulitNote: [],
-                    };
-                    continue;
-                case "{":
-                    if (isMultiNote) {
-                        isError = true;
-                        errorMessage = "Die Multi Note wurde bereits gestartet";
-                        continue;
-                    }
-
-                    isMultiNote = true;
-                    continue;
-                case "}":
-                    if (!isMultiNote) {
-                        isError = true;
-                        errorMessage = "Die Multi Note wurde nicht gestartet";
-                        return;
-                    }
-
-                    isMultiNote = false;
-                    notes.push(bufferMultiNote);
-                    bufferMultiNote = {
-                        isMultiNote: true,
-                        mulitNote: [],
-                    };
-                    continue;
-                case "|":
-                    notes.push({
-                        pause: true,
-                        isMultiNote: false,
-                        singleNote: {
-                            isHighNote: false,
-                            note: ";",
-                            delay: 0,
-                        },
-                    })
-                    continue;
-                case " " || "\t" || "\v" || "\f" || "\u00A0" || "\uFEFF" || "\u2028" || "\u2029":
-                    continue;
-                default:
-                    if (isMultiNote) {    
-                        let isHighNote = note === note.toUpperCase();
-                        let note2 = note;
-
-                        const isAlwaysHigh = isCharAlwaysHigh(note);
-                        if (isAlwaysHigh) {
-                            isHighNote = true;   
-                        }
-
-                        const isNumber = isNumberChar(note);
-                        if (isNumber) {
-                            isHighNote = false;
-                        }
-
-                        if (isHighNote) {
-                            note2 = note.toLowerCase();
-                        }
-
-                        const multiNote: MultiNote = {
-                            note: CharToKeyCode(note2),
-                            delay: 0,
-                            isHighNote: isHighNote
-                        };
-                        bufferMultiNote.mulitNote.push(multiNote);
-                    } else {
-                        let isHighNote = note === note.toUpperCase();
-                        let note2 = note;
-
-                        const isAlwaysHigh = isCharAlwaysHigh(note);
-                        if (isAlwaysHigh) {
-                            isHighNote = true;
-                        }
-
-                        const isNumber = isNumberChar(note);
-                        if (isNumber) {
-                            isHighNote = false;
-                        }
-
-                        if (isHighNote) {
-                            note2 = note.toLowerCase();
-                        }
-
-                        const singleNote: SingleNote = {
-                            note: CharToKeyCode(note2),
-                            delay: 0,
-                            isHighNote: isHighNote
-                        };
-
-                        bufferNormalNote.singleNote = singleNote;
-                        notes.push(bufferNormalNote);
-                        bufferNormalNote = {
-                            isMultiNote: false,
-                            singleNote: {
-                                isHighNote: false,
-                                note: null,
-                                delay: 0,
-                            },
-                        };
-                    }
+            // Add extended pause between paragraphs (not before first)
+            if (p > 0) {
+                events.push({ type: "extendedPause" });
             }
-        }    
 
-        if (isMultiNote) {
-            isError = true;
-            errorMessage = "Die Multi Note wurde nicht beendet";
+            let i = 0;
+            let lastWasNote = false;
+
+            while (i < paragraph.length) {
+                const char = paragraph[i];
+
+                // Handle brackets [ ] or { } for multi-notes
+                if (char === "[" || char === "{") {
+                    const closeBracket = char === "[" ? "]" : "}";
+                    const startIdx = i + 1;
+                    const endIdx = paragraph.indexOf(closeBracket, startIdx);
+
+                    if (endIdx === -1) {
+                        isError = true;
+                        errorMessage = `Fehlende schließende Klammer für '${char}'`;
+                        break;
+                    }
+
+                    const content = paragraph.substring(startIdx, endIdx);
+                    const hasSpaces = content.includes(" ");
+                    const notes: NoteInfo[] = [];
+
+                    // Parse notes inside brackets
+                    for (const c of content) {
+                        if (this.isNoteChar(c)) {
+                            notes.push(this.charToNoteInfo(c));
+                        }
+                        // Spaces inside brackets are handled by hasSpaces flag
+                    }
+
+                    if (notes.length > 0) {
+                        if (hasSpaces) {
+                            // [a s d f] = fastest possible sequence
+                            events.push({ type: "fastSequence", notes });
+                        } else {
+                            // [asdf] = simultaneous
+                            events.push({ type: "simultaneous", notes });
+                        }
+                    }
+
+                    lastWasNote = true;
+                    i = endIdx + 1;
+                    continue;
+                }
+
+                // Handle pipe | for pause
+                if (char === "|") {
+                    // Count consecutive pipes and spaces after pipes
+                    let multiplier = 1;
+                    let j = i + 1;
+
+                    while (j < paragraph.length) {
+                        if (paragraph[j] === "|") {
+                            multiplier++;
+                            j++;
+                        } else if (paragraph[j] === " ") {
+                            // Each space after | adds to the pause
+                            multiplier++;
+                            j++;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    events.push({ type: "pause", multiplier });
+                    lastWasNote = false;
+                    i = j;
+                    continue;
+                }
+
+                // Handle space (short pause between notes)
+                if (char === " " || char === "\t") {
+                    // Only add short pause if last was a note and next is a note
+                    if (lastWasNote) {
+                        // Look ahead to see if there's a note coming
+                        let nextNoteIdx = i + 1;
+                        while (nextNoteIdx < paragraph.length &&
+                               (paragraph[nextNoteIdx] === " " || paragraph[nextNoteIdx] === "\t")) {
+                            nextNoteIdx++;
+                        }
+                        if (nextNoteIdx < paragraph.length &&
+                            (this.isNoteChar(paragraph[nextNoteIdx]) ||
+                             paragraph[nextNoteIdx] === "[" ||
+                             paragraph[nextNoteIdx] === "{")) {
+                            events.push({ type: "shortPause" });
+                        }
+                    }
+                    lastWasNote = false;
+                    i++;
+                    continue;
+                }
+
+                // Handle newline (single newline = extended pause)
+                if (char === "\n" || char === "\r") {
+                    events.push({ type: "extendedPause" });
+                    lastWasNote = false;
+                    i++;
+                    // Skip \r\n combination
+                    if (char === "\r" && paragraph[i] === "\n") {
+                        i++;
+                    }
+                    continue;
+                }
+
+                // Handle single note
+                if (this.isNoteChar(char)) {
+                    events.push({ type: "single", note: this.charToNoteInfo(char) });
+                    lastWasNote = true;
+                    i++;
+                    continue;
+                }
+
+                // Skip unknown characters
+                i++;
+            }
+
+            if (isError) break;
         }
 
         if (isError) {
-            this.errorMessages = errorMessage;
+            this.error = errorMessage;
             return;
         } else {
-            this.errorMessages = "";
+            this.error = "";
         }
-        this.notes = notes;
+
+        this.parsedEvents = events;
+
+        // Count actual playable notes
+        this.noteCount = events.reduce((count, event) => {
+            if (event.type === "single") return count + 1;
+            if (event.type === "simultaneous" || event.type === "fastSequence") {
+                return count + event.notes.length;
+            }
+            return count;
+        }, 0);
+
+        this.calculateEstimatedDuration();
+    }
+
+    private calculateEstimatedDuration() {
+        let totalMs = 0;
+        // BPM formula: 60000ms / BPM = ms per beat (quarter note)
+        const beatMs = 60000 / this.bpm;
+        // Base note duration: 1/8 note timing
+        const noteMs = beatMs / 2;
+        // Short pause (space between notes)
+        const shortPauseMs = noteMs * 0.5;
+        // Extended pause (newline)
+        const extendedPauseMs = beatMs * 0.5;
+        const fastSequenceNoteDelay = 5; // Very fast between notes in sequence
+
+        for (const event of this.parsedEvents) {
+            switch (event.type) {
+                case "single":
+                    totalMs += 12 + noteMs; // Note press + 1/8 note timing
+                    break;
+                case "simultaneous":
+                    totalMs += 12 + noteMs; // All pressed at once + 1/8 note timing
+                    break;
+                case "fastSequence":
+                    // Each note in sequence + tiny delay between
+                    totalMs += event.notes.length * (12 + fastSequenceNoteDelay) + noteMs;
+                    break;
+                case "shortPause":
+                    totalMs += shortPauseMs; // Small additional pause
+                    break;
+                case "pause":
+                    totalMs += noteMs * event.multiplier; // | = 1/8 note per |
+                    break;
+                case "extendedPause":
+                    totalMs += extendedPauseMs;
+                    break;
+            }
+        }
+
+        // Format as HH:MM:SS
+        const totalSeconds = Math.floor(totalMs / 1000);
+        const hours = Math.floor(totalSeconds / 3600).toString().padStart(2, "0");
+        const minutes = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, "0");
+        const seconds = (totalSeconds % 60).toString().padStart(2, "0");
+        this.estimatedDuration = `${hours}:${minutes}:${seconds}`;
     }
 
     public requestSync() {
         this.mainWindow.webContents.send("requestSyncResponse", {
-            version: this.version,
             state: this.state,
             playtime: this.playtime,
-            notesCount: this.notesCount,
+            estimatedDuration: this.estimatedDuration,
+            noteCount: this.noteCount,
+            currentNoteIndex: this.currentNoteIndex,
             notes: this.notes,
-            notesRaw: this.notesRaw,
-            errorMessages: this.errorMessages,
-
-            startHotkey: this.startHotkey,
-            stopHotkey: this.stopHotkey,
-            pauseHotkey: this.pauseHotkey,
+            error: this.error,
+            isLoop: this.isLoop,
             bpm: this.bpm,
         });
     }
 
-    private timerInterval: NodeJS.Timeout;
-    public startTimer() {
-        if (this.state === "running") return;
-        const startTime = Date.now();
-        this.timerInterval = setInterval(() => {
-            // Playtime update every second - Format: HH:MM:SS
-            const time = Date.now() - startTime;
-            const date = new Date(time);
+    private timerInterval: NodeJS.Timeout | null = null;
+    private startTime: number = 0;
+    private pausedTime: number = 0;
+
+    // Send sync data immediately to renderer
+    private sendSync() {
+        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+            this.mainWindow.webContents.send("syncDataResponse", {
+                state: this.state,
+                playtime: this.playtime,
+                estimatedDuration: this.estimatedDuration,
+                noteCount: this.noteCount,
+                currentNoteIndex: this.currentNoteIndex,
+                error: this.error,
+                isLoop: this.isLoop,
+                bpm: this.bpm,
+            });
+        }
+    }
+
+    private updatePlaytime() {
+        if (this.state === "running" && this.startTime > 0) {
+            const elapsed = Date.now() - this.startTime - this.pausedTime;
+            const date = new Date(elapsed);
             const hours = date.getUTCHours().toString().padStart(2, "0");
             const minutes = date.getUTCMinutes().toString().padStart(2, "0");
             const seconds = date.getUTCSeconds().toString().padStart(2, "0");
             this.playtime = `${hours}:${minutes}:${seconds}`;
-        }, 1000);
+        }
     }
-        
+
+    public startTimer() {
+        if (this.timerInterval) return;
+        this.startTime = Date.now();
+        this.pausedTime = 0;
+        // Use a faster interval for smoother UI updates
+        this.timerInterval = setInterval(() => {
+            this.updatePlaytime();
+            this.sendSync();
+        }, 50);
+    }
+
+    public stopTimer() {
+        if (this.timerInterval) {
+            clearInterval(this.timerInterval);
+            this.timerInterval = null;
+        }
+        this.startTime = 0;
+        this.pausedTime = 0;
+    }
+
+    private playbackAborted = false;
 
     public async startPianoBot() {
         if (this.state === "running") return;
 
         if (this.state === "paused") {
             this.state = "running";
+            this.sendSync();
+            setImmediate(() => this.sendSync());
             return;
         }
-        
+
         this.state = "running";
         this.playtime = "00:00:00";
-        for (const note of this.notes) {
-            while (this.state === "paused") {
-                await new Promise((resolve) => setTimeout(resolve, 100));
+        this.currentNoteIndex = 0;
+        this.playbackAborted = false;
+        this.startTimer();
+        this.sendSync();
+        setImmediate(() => this.sendSync());
+
+        // Run playback
+        this.runPlayback();
+    }
+
+    private async runPlayback() {
+        // BPM formula: 60000ms / BPM = ms per beat (quarter note)
+        // But for piano playing, we use subdivisions - 1/8 or 1/16 notes are more common
+        const beatMs = 60000 / this.bpm;
+        // Base note duration: 1/8 note timing (faster than quarter notes)
+        const noteMs = beatMs / 2;
+        // Short pause (space between notes) - adds a slight delay
+        const shortPauseMs = noteMs * 0.5;
+        // Extended pause (newline) - about half a beat
+        const extendedPauseMs = beatMs * 0.5;
+
+        let nextBeatTime = Date.now();
+
+        for (let i = 0; i < this.parsedEvents.length; i++) {
+            // Check if aborted
+            if (this.playbackAborted || this.state === "stopped") {
+                await this.cleanup();
+                return;
             }
 
-            if (this.state === "stopped") {
-                clearInterval(this.timerInterval);
+            const event = this.parsedEvents[i];
+
+            // Check pause state
+            while (this.state === "paused") {
+                if (this.playbackAborted) {
+                    await this.cleanup();
+                    return;
+                }
+                await this.sleep(20);
+                // Reset timing after pause
+                nextBeatTime = Date.now();
+            }
+
+            if (this.playbackAborted) {
+                await this.cleanup();
                 return;
-            };
+            }
 
             try {
-                if (note.pause) {
-                    await new Promise((resolve) => setTimeout(resolve, 30000 / (this.bpm)));
-                    continue;
-                }
-                
-                if (note.isMultiNote) {
-                    for (const multiNote of note.mulitNote) {
-                        if (multiNote.isHighNote) {
-                            keysender.keyboard.toggleKey("shift", true);
-                            await new Promise((resolve) => setTimeout(resolve, 1));
+                switch (event.type) {
+                    case "single":
+                        this.currentNoteIndex++;
+                        await this.playSingleNote(event.note);
+                        // Single note uses 1/8 note timing
+                        nextBeatTime += noteMs;
+                        await this.waitUntil(nextBeatTime);
+                        break;
+
+                    case "simultaneous":
+                        this.currentNoteIndex += event.notes.length;
+                        await this.playSimultaneous(event.notes);
+                        // Chord uses 1/8 note timing
+                        nextBeatTime += noteMs;
+                        await this.waitUntil(nextBeatTime);
+                        break;
+
+                    case "fastSequence":
+                        for (const note of event.notes) {
+                            if (this.playbackAborted) {
+                                await this.cleanup();
+                                return;
+                            }
+                            this.currentNoteIndex++;
+                            await this.playSingleNote(note);
+                            await this.sleep(5);
                         }
+                        // After fast sequence, continue with normal timing
+                        nextBeatTime += noteMs;
+                        await this.waitUntil(nextBeatTime);
+                        break;
 
-                        keysender.keyboard.toggleKey(multiNote.note, true);
+                    case "shortPause":
+                        // Space between notes adds small delay
+                        nextBeatTime += shortPauseMs;
+                        await this.waitUntil(nextBeatTime);
+                        break;
 
-                        if (multiNote.isHighNote) {
-                            await new Promise((resolve) => setTimeout(resolve, 1));
-                            keysender.keyboard.toggleKey("shift", false);
-                        }
-                    }
+                    case "pause":
+                        // | character = pause based on note timing (1/8 note per |)
+                        nextBeatTime += noteMs * event.multiplier;
+                        await this.waitUntil(nextBeatTime);
+                        break;
 
-                    await new Promise((resolve) => setTimeout(resolve, 10));
-
-                    for (const multiNote of note.mulitNote) {
-                        keysender.keyboard.toggleKey(multiNote.note, false);
-                    }
-                } else {
-                    if (note.singleNote.isHighNote) {
-                        keysender.keyboard.toggleKey("shift", true);
-                        await new Promise((resolve) => setTimeout(resolve, 1));
-                    }
-
-                    keysender.keyboard.toggleKey(note.singleNote.note, true);
-                    await new Promise((resolve) => setTimeout(resolve, 10));
-                    keysender.keyboard.toggleKey(note.singleNote.note, false);
-                    keysender.keyboard.toggleKey("shift", false);
+                    case "extendedPause":
+                        nextBeatTime += extendedPauseMs;
+                        await this.waitUntil(nextBeatTime);
+                        break;
                 }
-
-                // Delay BPM
-                await new Promise((resolve) => setTimeout(resolve, 30000 / (this.bpm) - 12));
             } catch (error) {
                 console.log(error);
             }
         }
 
-        clearInterval(this.timerInterval);
+        // Finished playing
+        await this.cleanup();
         this.state = "stopped";
+        this.sendSync();
 
-        if (this.isLoop) {
-            this.startPianoBot();
+        if (this.isLoop && !this.playbackAborted) {
+            setTimeout(() => this.startPianoBot(), 100);
         }
+    }
+
+    // Wait until a specific timestamp, checking for abort
+    private async waitUntil(targetTime: number) {
+        while (Date.now() < targetTime) {
+            if (this.playbackAborted) return;
+            const remaining = targetTime - Date.now();
+            if (remaining <= 0) break;
+            // Sleep in small chunks to allow abort checking
+            await this.sleep(Math.min(10, remaining));
+        }
+    }
+
+    private async playSingleNote(note: NoteInfo) {
+        try {
+            if (!note.note) return;
+
+            if (note.isHighNote) {
+                await keyboard.pressKey(Key.LeftShift);
+                await this.sleep(2);
+            }
+
+            await keyboard.pressKey(note.note);
+            await this.sleep(50);
+            await keyboard.releaseKey(note.note);
+
+            if (note.isHighNote) {
+                await keyboard.releaseKey(Key.LeftShift);
+            }
+        } catch (error) {
+            try {
+                await keyboard.releaseKey(Key.LeftShift);
+            } catch {}
+            throw error;
+        }
+    }
+
+    private async playSimultaneous(notes: NoteInfo[]) {
+        try {
+            const pressedKeys: Key[] = [];
+
+            // Separate high and low notes
+            const lowNotes = notes.filter(n => !n.isHighNote && n.note);
+            const highNotes = notes.filter(n => n.isHighNote && n.note);
+
+            // Press low notes first (without shift)
+            for (const note of lowNotes) {
+                if (note.note) {
+                    await keyboard.pressKey(note.note);
+                    pressedKeys.push(note.note);
+                }
+            }
+
+            // Press high notes with shift
+            if (highNotes.length > 0) {
+                await keyboard.pressKey(Key.LeftShift);
+                await this.sleep(1);
+
+                for (const note of highNotes) {
+                    if (note.note) {
+                        await keyboard.pressKey(note.note);
+                        pressedKeys.push(note.note);
+                    }
+                }
+
+                await keyboard.releaseKey(Key.LeftShift);
+            }
+
+            // Hold briefly
+            await this.sleep(50);
+
+            // Release all notes
+            for (const key of pressedKeys) {
+                await keyboard.releaseKey(key);
+            }
+        } catch (error) {
+            try {
+                await keyboard.releaseKey(Key.LeftShift);
+            } catch {}
+            throw error;
+        }
+    }
+
+    private async cleanup() {
+        this.stopTimer();
+        // Safety: release shift key in case it's stuck
+        try {
+            await keyboard.releaseKey(Key.LeftShift);
+        } catch {}
+    }
+
+    private sleep(ms: number): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     public pausePianoBot() {
         if (this.state !== "running") return;
         this.state = "paused";
+        this.sendSync();
+        setImmediate(() => this.sendSync());
+        setTimeout(() => this.sendSync(), 50);
     }
 
     public stopPianoBot() {
         if (this.state === "stopped") return;
         this.state = "stopped";
+        this.playbackAborted = true;
+        this.currentNoteIndex = 0;
+        this.sendSync();
+        this.stopTimer();
+        setImmediate(() => this.sendSync());
+        setTimeout(() => this.sendSync(), 50);
     }
 
     public loadPianoBot() {
-        dialog.showOpenDialog(this.mainWindow, {
-            title: "Load PianoBot",
-            defaultPath: "PianoBot.json",
-            filters: [
-                { name: "JSON", extensions: ["json"] },
-            ],
-        }).then((result) => {
-            if (result.canceled) return;
-            if (result.filePaths === undefined) return;
+        dialog
+            .showOpenDialog(this.mainWindow, {
+                title: "Noten laden",
+                defaultPath: "PianoBot.json",
+                filters: [{ name: "JSON", extensions: ["json"] }],
+            })
+            .then((result) => {
+                if (result.canceled) return;
+                if (result.filePaths === undefined) return;
 
-            fs.readFile(result.filePaths[0], "utf-8", (err, data) => {
-                if (err) {
-                    console.log(err);
-                    return;
-                }
+                fs.readFile(result.filePaths[0], "utf-8", (err, data) => {
+                    if (err) {
+                        console.log(err);
+                        return;
+                    }
 
-                const pianoBotData = JSON.parse(data);
+                    const pianoBotData = JSON.parse(data);
 
-                this.bpm = pianoBotData.bpm;
-                this.notesRaw = pianoBotData.notes;
+                    if (pianoBotData.bpm) this.bpm = pianoBotData.bpm;
+                    if (pianoBotData.notes) this.notes = pianoBotData.notes;
 
-                this.formatNotes();
-                this.requestSync();
+                    this.parseNotes();
+                    this.requestSync();
+                });
             });
-        });
     }
 
     public savePianoBot() {
         const data = {
             version: this.version,
-            bpm: this.bpm, 
-            notes: this.notesRaw,
+            bpm: this.bpm,
+            notes: this.notes,
         };
 
         const dataString = JSON.stringify(data, null, 4);
 
-        dialog.showSaveDialog(this.mainWindow, {
-            title: "Save PianoBot - " + this.version,
-            defaultPath: "PianoBot.json",
-            filters: [
-                { name: "JSON", extensions: ["json"] },
-            ],
-        }).then((result) => {
-            if (result.canceled) return;
-            if (result.filePath === undefined) return;
+        dialog
+            .showSaveDialog(this.mainWindow, {
+                title: "Noten speichern",
+                defaultPath: "PianoBot.json",
+                filters: [{ name: "JSON", extensions: ["json"] }],
+            })
+            .then((result) => {
+                if (result.canceled) return;
+                if (result.filePath === undefined) return;
 
-            fs.writeFileSync(result.filePath, dataString);
-        }
-        );   
+                fs.writeFileSync(result.filePath, dataString);
+            });
     }
 }
 
